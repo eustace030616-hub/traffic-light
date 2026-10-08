@@ -15,6 +15,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-10-08
+
+### Fixed
+
+- **The light stopped changing once eight sessions had finished.** `meta.sessions` is capped at eight and
+  sorted by urgency, where `waiting` outranks `working` — and nothing ever removed a session that was left
+  behind, because `agent/disposed` fires for a session that is *disposed*, not for one the user simply
+  stopped using. After eight finishes, every working session was pushed off the snapshot: a prompt was
+  accepted (`reason: prompt`) while both the headline and the snapshot still said `waiting`, so the light sat
+  green or dark through a whole turn. Two changes: live sessions (`asking`, `working`) are listed first and
+  are never crowded out, and a session that has not moved in twelve hours is forgotten.
+- Diagnosed from the live document: eight `waiting` sessions aged 7 hours to 4 days, none disposed, and the
+  working session nowhere in `meta.sessions` — while the daemon was healthy throughout (process alive, main
+  thread idle in its run loop, window on screen, document re-stamped every two seconds). That is why the
+  failure looked like "the light stopped working" rather than a crash.
+
 ## [0.8.2] - 2026-10-02
 
 ### Changed

@@ -111,7 +111,7 @@ DSH Desktop                                  the daemon (DSHLight)
 | `heartbeatMs` | The publisher's cadence, so the daemon need not hardcode a staleness rule. |
 | `reason` | Which event wrote this: `init`, `session-start`, `prompt`, `turn-end`, `agent-idle`, `agent-running`, `approval`, `question`, `answered`, `dispose`. Debugging only. |
 | `meta` | Extension channel: additive, and unknown keys must be ignored. |
-| `meta.sessions` | Every session the publisher watches: `{ id, state, reason, changedAt }`. |
+| `meta.sessions` | Every session the publisher watches: `{ id, state, reason, changedAt }`. Live sessions (`asking`, `working`) come first and are never crowded out; a session that has not moved in twelve hours is forgotten. |
 | `meta.account` | `{ fetchedAt, intervalMs, isAvailable, balances: [{ currency, total, granted, toppedUp }] }`, or a `reason` when the lookup failed. Figures are strings; never a credential. |
 
 New information goes into `meta`, keys are only ever added, and a reader that meets a state it has never
@@ -146,7 +146,7 @@ Every key is optional and validated by hand; an unusable value falls back to the
 ## The daemon
 
 ```bash
-npm test                  # 65 checks — no DSH, no network, no key
+npm test                  # 67 checks — no DSH, no network, no key
 npm run ship              # rebuild bin/ from the Swift (npm test fails if it drifts)
 ./mac/build.sh --run      # follow the light in a terminal
 open build/DSHLight.app   # draw it by hand

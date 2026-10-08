@@ -689,6 +689,64 @@ await check('balance: a click on the list is served on the next heartbeat', asyn
   }
 })
 
+await check('live work is never crowded out by finished sessions', async () => {
+  // The bug this exists for: `waiting` outranks `working`, the snapshot is capped
+  // at eight, and nothing ever removed a session that was left behind — so eight
+  // finished sessions hid every working one, and the light stopped changing.
+  const many = makeCtx()
+  const path = join(root, 'crowded', 'state.json')
+  apply(many.ctx, { statePath: path, heartbeatMs: 60000, launch: false, balance: false })
+  const readMany = () => JSON.parse(readFileSync(path, 'utf8'))
+  for (let index = 0; index < 8; index += 1) {
+    const agent = { session: { id: `session-done-${index}`, header: { cwd: '/tmp/done' } } }
+    await fire(many, 'agent/created', { agent })
+    await fire(many, 'agent/turn-stopping', { agent })
+  }
+  assert.equal(readMany().meta.sessions.length, 8, 'eight finishes fill the snapshot')
+
+  const live = { session: { id: 'session-live', header: { cwd: '/tmp/live' } } }
+  await fire(many, 'agent/created', { agent: live })
+  await fire(many, 'agent/pre-step', { agent: live, messages: [{ role: 'user' }] })
+  const doc = readMany()
+  const ids = doc.meta.sessions.map((session) => session.id)
+  assert.equal(ids[0], 'session-live', 'the working session comes first')
+  assert.equal(doc.meta.sessions.length, 8, 'the snapshot stays the size it was')
+  assert.equal(
+    ids.filter((id) => id.startsWith('session-done')).length,
+    7,
+    'and a finish gave way to it'
+  )
+  for (const dispose of many.disposers) dispose()
+})
+
+await check('a session that ended long ago is forgotten', async () => {
+  const realNow = Date.now
+  let clock = realNow()
+  Date.now = () => clock
+  try {
+    const stale = makeCtx()
+    const path = join(root, 'stale', 'state.json')
+    apply(stale.ctx, { statePath: path, heartbeatMs: 60000, launch: false, balance: false })
+    const readStale = () => JSON.parse(readFileSync(path, 'utf8'))
+    const old = { session: { id: 'session-old', header: { cwd: '/tmp/old' } } }
+    await fire(stale, 'agent/created', { agent: old })
+    await fire(stale, 'agent/turn-stopping', { agent: old })
+    assert.equal(readStale().meta.sessions.length, 1, 'the finish is reported while it is fresh')
+
+    clock += 13 * 60 * 60 * 1000
+    const fresh = { session: { id: 'session-fresh', header: { cwd: '/tmp/fresh' } } }
+    await fire(stale, 'agent/created', { agent: fresh })
+    assert.deepEqual(
+      readStale().meta.sessions.map((session) => session.id),
+      ['session-fresh'],
+      'twelve hours on, the finish nobody came back for is gone'
+    )
+    for (const dispose of stale.disposers) dispose()
+  } finally {
+    Date.now = realNow
+  }
+})
+
 rmSync(root, { recursive: true, force: true })
 
 console.log(`\n${passed} passed, ${failed} failed\n`)
