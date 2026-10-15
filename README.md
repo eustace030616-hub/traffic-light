@@ -28,7 +28,7 @@ open ~/traffic-light/bin/DSHLight.app
 | You see | It means |
 |---|---|
 | **dark** | rest (`idle`): nothing is pending, which is not a failure |
-| **yellow, steady** | a session is working (`working`) |
+| **yellow, steady** | a session is working (`working`) — including any subagents it has delegated to |
 | **yellow, pulsing** | a session is blocked on you (`asking`) — 30% → 100% over 1.3 s |
 | **green** | a turn finished and you have not read it (`waiting`) |
 | **red** | the feed itself cannot be trusted — gone, unreadable or stale |
@@ -111,7 +111,7 @@ DSH Desktop                                  the daemon (DSHLight)
 | `heartbeatMs` | The publisher's cadence, so the daemon need not hardcode a staleness rule. |
 | `reason` | Which event wrote this: `init`, `session-start`, `prompt`, `turn-end`, `agent-idle`, `agent-running`, `approval`, `question`, `answered`, `dispose`. Debugging only. |
 | `meta` | Extension channel: additive, and unknown keys must be ignored. |
-| `meta.sessions` | Every session the publisher watches: `{ id, state, reason, changedAt }`. Live sessions (`asking`, `working`) come first and are never crowded out; a session that has not moved in twelve hours is forgotten. |
+| `meta.sessions` | Every session the publisher watches: `{ id, state, reason, changedAt, agents? }`, where `agents` is how many subagents of that session are working. Live sessions (`asking`, `working`) come first and are never crowded out; a session that has not moved in twelve hours is forgotten. |
 | `meta.account` | `{ fetchedAt, intervalMs, isAvailable, balances: [{ currency, total, granted, toppedUp }] }`, or a `reason` when the lookup failed. Figures are strings; never a credential. |
 
 New information goes into `meta`, keys are only ever added, and a reader that meets a state it has never
@@ -125,7 +125,7 @@ heard of rests rather than alarms — so a new state or key cannot make an older
 | → `working` | `agent/pre-step` with messages, or `agent/status: running` |
 | → `waiting` | `agent/turn-stopping`, or `agent/status: idle` |
 | → `asking` | `approval/request` or `user-questions/request`, counted until the last is answered |
-| ignored | any of the above on a subagent; an ask is charged to its parent session |
+| ignored | a subagent's *turn end*: a child finishing is not the session finishing. A child's **work** does count — the session is `working` while one of its subagents is, and the snapshot says how many (`agents`) — and an ask is charged to its parent session |
 
 Only the agent's status covers every ending: a turn you **stop** is aborted, and `turn-stopping` is never
 dispatched for it — which is why a stopped session used to keep the light yellow until DSH restarted.
@@ -146,7 +146,7 @@ Every key is optional and validated by hand; an unusable value falls back to the
 ## The daemon
 
 ```bash
-npm test                  # 67 checks — no DSH, no network, no key
+npm test                  # 68 checks — no DSH, no network, no key
 npm run ship              # rebuild bin/ from the Swift (npm test fails if it drifts)
 ./mac/build.sh --run      # follow the light in a terminal
 open build/DSHLight.app   # draw it by hand

@@ -172,10 +172,18 @@ await check('agent/turn-stopping (subagent): ignored — no false green mid-turn
   assert.equal(read().state, 'waiting')
 })
 
-await check('agent/pre-step (subagent prompt): ignored — no false yellow mid-turn', async () => {
+await check('subagent work keeps the light yellow, and its end is not a finish', async () => {
+  // The session's own turn is over (the test above left it at `waiting`), so this
+  // is the case that used to go dark: a delegated run is still going.
   await fire(main, 'agent/pre-step', { agent: CHILD, messages: [{ role: 'user' }] })
-  assert.equal(read().state, 'waiting')
-  assert.equal(read().sessionId, 'session-root')
+  const busy = read()
+  assert.equal(busy.state, 'working', 'a working subagent is the session working')
+  assert.equal(busy.meta.sessions.find((session) => session.id === 'session-root').agents, 1)
+
+  await fire(main, 'agent/turn-stopping', { agent: CHILD, turn: 1 })
+  const after = read()
+  assert.equal(after.state, 'waiting', 'a subagent finishing is not the session finishing')
+  assert.equal(after.meta.sessions.find((session) => session.id === 'session-root').agents, undefined)
 })
 
 await check('agent/created (subagent): ignored, session id untouched', async () => {
@@ -312,6 +320,38 @@ await check('a subagent ask is charged to its parent session, not to itself', as
   assert.equal(doc.meta.sessions.some((s) => s.id === 'session-child'), false)
   release()
   await pending
+})
+
+await check('subagent work keeps its session working, not resting', async () => {
+  // The report: the session is running — it is waiting on a subagent's result —
+  // and the light is dark, because nothing a child agent does reaches the
+  // document. A session whose own turn has closed but whose subagents are still
+  // working is busy, and the light has to say so.
+  const nested = makeCtx()
+  const path = join(root, 'nested-agent', 'state.json')
+  apply(nested.ctx, { statePath: path, heartbeatMs: 60000, launch: false, balance: false })
+  const readNested = () => JSON.parse(readFileSync(path, 'utf8'))
+  const parent = { session: { id: 'session-parent', header: { cwd: '/tmp/project' } } }
+  const helper = { session: { id: 'session-helper', header: { parentSession: 'session-parent' } } }
+
+  await fire(nested, 'agent/created', { agent: parent })
+  await fire(nested, 'agent/pre-step', { agent: parent, messages: [{ role: 'user' }] })
+  assert.equal(readNested().state, 'working')
+  await fire(nested, 'agent/turn-stopping', { agent: parent }) // the turn closes…
+  assert.equal(readNested().state, 'waiting')
+
+  await fire(nested, 'agent/status', { agent: helper, status: 'running' }) // …the helper keeps working
+  const busy = readNested()
+  assert.equal(busy.state, 'working', 'a session with a working subagent is not at rest')
+  assert.equal(
+    busy.meta.sessions.find((session) => session.id === 'session-parent').state,
+    'working',
+    'and the snapshot says the same'
+  )
+
+  await fire(nested, 'agent/turn-stopping', { agent: helper }) // the helper finishes
+  assert.equal(readNested().state, 'waiting', 'the parent is still the one that decides the light')
+  for (const dispose of nested.disposers) dispose()
 })
 
 const beat = makeCtx()

@@ -27,22 +27,30 @@ import { pathToFileURL } from 'node:url'
 
 import * as plugin from '../lib/index.js'
 
-const APP_MODULES =
-  process.env.DSH_APP_MODULES ??
-  '/Applications/DSH Desktop.app/Contents/Resources/app.asar.unpacked/node_modules'
+// Where the app keeps its packages. It moved them into the archive, and the node
+// the harness puts on PATH is an Electron running as node, which reads straight
+// through it — a plain node sees `existsSync` answer false and skips, which is
+// the right result on a machine that has no DSH Desktop to test against.
+const RESOURCES = '/Applications/DSH Desktop.app/Contents/Resources'
+const CANDIDATES = [
+  process.env.DSH_APP_MODULES,
+  join(RESOURCES, 'app.asar', 'node_modules'),
+  join(RESOURCES, 'app.asar.unpacked', 'node_modules')
+].filter(Boolean)
 
-const CORDIS_ENTRY = join(APP_MODULES, '@deepseek-ai/cordis/lib/index.js')
+const CORDIS_ENTRY = join('@deepseek-ai/cordis/lib/index.js')
+const APP_MODULES = CANDIDATES.find((dir) => existsSync(join(dir, CORDIS_ENTRY)))
 
 // Skip rather than fail: this test needs the cordis that ships inside DSH
 // Desktop, which is not present on a machine that has not installed it.
-if (!existsSync(CORDIS_ENTRY)) {
+if (APP_MODULES === undefined) {
   console.log('dsh-status — cordis integration test SKIPPED')
-  console.log(`  no cordis at ${CORDIS_ENTRY}`)
-  console.log('  set DSH_APP_MODULES to the app\'s node_modules directory to run it\n')
+  console.log(`  no cordis in any of:\n    ${CANDIDATES.join('\n    ')}`)
+  console.log("  set DSH_APP_MODULES to the app's node_modules directory to run it\n")
   process.exit(0)
 }
 
-const { Context } = await import(pathToFileURL(CORDIS_ENTRY).href)
+const { Context } = await import(pathToFileURL(join(APP_MODULES, CORDIS_ENTRY)).href)
 
 const root = mkdtempSync(join(tmpdir(), 'dsh-status-cordis-'))
 const statePath = join(root, 'nested', 'state.json')
@@ -135,13 +143,21 @@ await check('agent/status settles a stopped turn through the real emitter', asyn
   assert.equal(doc.reason, 'agent-idle')
 })
 
-await check('a subagent prompt is ignored under real dispatch — no false yellow', async () => {
+await check('subagent work under real dispatch: busy, and its end is not a finish', async () => {
+  // The session's own turn is over, from the stop above. A delegated run keeps it
+  // busy — and when that run ends, the session is exactly where it was.
   await ctx.waterfall(
     'agent/pre-step',
     { agent: CHILD_AGENT, messages: [{ role: 'user' }], turn: 1, step: 1 },
     () => 'inner'
   )
-  assert.equal(read().state, 'waiting')
+  assert.equal(read().state, 'working', 'a working subagent is the session working')
+  assert.equal(read().meta.sessions.find((session) => session.id === 'session-root').agents, 1)
+
+  await ctx.serial('agent/turn-stopping', { agent: CHILD_AGENT, turn: 1 })
+  const doc = read()
+  assert.equal(doc.state, 'waiting', 'a subagent finishing must not read as the session finishing')
+  assert.equal(doc.meta.sessions.find((session) => session.id === 'session-root').agents, undefined)
 })
 
 await check('an approval through the real waterfall still gets the real answer', async () => {

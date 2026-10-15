@@ -15,6 +15,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-10-09
+
+### Fixed
+
+- **A session waiting on a delegated run went dark.** The main agent's turn closes while its subagents are still
+  working — `agent/turn-stopping` has been dispatched, and the session is busy — and the document said `waiting`,
+  so the light rested through the whole run. Child agents were filtered out everywhere, deliberately (a
+  subagent's *finish* must never read as "your move"), which also hid their *work*: a delegated run of any length
+  was invisible. The publisher now tracks the subagents that are working, per session, and reports a session with
+  one or more of them as `working`; a child's turn end only stops that child counting, and never becomes the
+  session's finish. Snapshot entries carry `agents: n` while it is true, so a reader can see how much of the work
+  is delegated.
+- `test/cordis.js` stopped finding cordis after the desktop app moved its JavaScript into `app.asar`, and skipped
+  silently — a green `npm test` that had quietly lost a third of its checks. It now looks inside the archive as
+  well as beside it (the node the harness puts on PATH is an Electron running as node, and reads through it), and
+  still skips cleanly, naming the paths it tried, when neither is present.
+
 ## [0.8.3] - 2026-10-08
 
 ### Fixed
